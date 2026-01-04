@@ -6,6 +6,28 @@
 //
 
 import SwiftUI
+import Foundation
+
+// MARK: - Workout Models
+struct WPSetEntry: Identifiable, Hashable {
+    let id = UUID()
+    var reps: Int
+    var weight: Double      // <- NEW
+    var done: Bool = false
+
+    init(reps: Int, weight: Double = 0, done: Bool = false) {
+        self.reps = reps
+        self.weight = weight
+        self.done = done
+    }
+}
+struct WPExercisePlan: Identifiable, Hashable { let id = UUID(); var name: String; var sets: [WPSetEntry] }
+struct WPDayPlan: Identifiable, Hashable {
+    let id = UUID()
+    var name: String
+    var exercises: [WPExercisePlan] = []
+}
+enum WPWorkoutKind: String, Identifiable { case push = "Push", pull = "Pull", legs = "Legs", custom = "Custom"; var id: String { rawValue } }
 
 // MARK: - WorkoutSession Model (UPDATE TO BE CODABLE)
 struct WorkoutSession: Identifiable, Codable {

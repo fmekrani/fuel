@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Chat Message Model
 struct ChatMessage: Identifiable {
