@@ -108,6 +108,9 @@ struct HomeView: View {
                 )
                 .padding(.horizontal)
 
+                FriendsView()
+                    .padding(.horizontal)
+
                 HomeQuickActions(store: store, workoutHistory: workoutHistory)
                     .padding(.horizontal)
 
@@ -2386,30 +2389,28 @@ struct WorkoutHistoryCard: View {
     }
     
     private var groupedByDay: [(day: String, sessions: [WorkoutSession])] {
-        var grouped: [String: [WorkoutSession]] = [:]
+        var grouped: [String: (dateKey: Date, sessions: [WorkoutSession])] = [:]
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
         
         for session in past10DaysSessions {
             let dayKey = formatter.string(from: session.date)
             if grouped[dayKey] == nil {
-                grouped[dayKey] = []
+                grouped[dayKey] = (dateKey: session.date, sessions: [])
             }
-            grouped[dayKey]?.append(session)
+            grouped[dayKey]?.sessions.append(session)
         }
         
         return grouped
             .sorted { date1, date2 in
-                guard let d1 = formatter.date(from: date1.key),
-                      let d2 = formatter.date(from: date2.key) else { return false }
-                return d1 > d2
+                // Compare using actual calendar dates, not formatted strings
+                return date1.value.dateKey > date2.value.dateKey
             }
             .map { (key, value) in
-                let sorted = value.sorted { $0.date > $1.date }
+                let sorted = value.sessions.sorted { $0.date > $1.date }
                 return (key, sorted)
             }
     }
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -3250,6 +3251,51 @@ struct CameraPicker: UIViewControllerRepresentable {
             }
             parent.dismiss()
         }
+    }
+}
+
+// MARK: - Friends View
+struct FriendsView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Friends", systemImage: "person.2.fill")
+                    .font(.headline)
+                Spacer()
+                NavigationLink {
+                    Text("Friends Page")
+                        .navigationTitle("Friends")
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            VStack(spacing: 12) {
+                Text("No friends yet")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                Button(action: {}) {
+                    Text("Add Friends")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color(red: 0.86, green: 0.18, blue: 0.18))
+                        .cornerRadius(10)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(12)
+            .background(Color(.systemGray6))
+            .cornerRadius(12)
+        }
+        .padding(16)
+        .background(.ultraThinMaterial)
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: 3)
     }
 }
 

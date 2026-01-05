@@ -98,6 +98,8 @@ class WorkoutHistoryStore: ObservableObject {
             volume: volume
         )
         sessions.append(session)
+        saveSessions()
+        objectWillChange.send()
     }
     
     // Get the last N top weights for a specific exercise
