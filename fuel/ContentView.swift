@@ -21,7 +21,7 @@ extension View {
 }
 
 struct ContentView: View {
-    enum Tab { case home, calorie, coach, friends, workout, settings }
+    enum Tab { case home, calorie, coach, workout, settings }
     @State private var selected: Tab = .home
     @StateObject private var store = CalorieStore()
     @StateObject private var workoutHistory = WorkoutHistoryStore()
@@ -60,12 +60,6 @@ struct ContentView: View {
             }
             .tabItem { Label("Coach", systemImage: "message.fill") }
             .tag(Tab.coach)
-
-            NavigationStack {
-                FriendsView()
-            }
-            .tabItem { Label("Friends", systemImage: "person.2.fill") }
-            .tag(Tab.friends)
 
             NavigationStack {
                 WorkoutView()
@@ -279,197 +273,6 @@ private struct HomeMotivationCard: View {
         .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 6)
         .foregroundColor(.white)
     }
-}
-
-// MARK: - Friends / Community
-struct FriendsView: View {
-    @State private var searchText = ""
-    @State private var invites: [Friend] = [
-        Friend(name: "Alex Kim", status: "Sent", streak: 4),
-        Friend(name: "Priya Singh", status: "Accept", streak: 12),
-        Friend(name: "Jordan Lee", status: "Add", streak: 7)
-    ]
-    @State private var feed: [SocialPost] = [
-        SocialPost(author: "Mia", action: "Logged a workout", detail: "Push day • 22 sets"),
-        SocialPost(author: "Sam", action: "Hit hydration goal", detail: "2.6 L today"),
-        SocialPost(author: "Kai", action: "New PR", detail: "Deadlift 365 lb")
-    ]
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                inviteCard
-                leaderboardCard
-                feedCard
-            }
-            .padding(16)
-        }
-        .navigationTitle("Friends")
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic))
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Stay accountable together")
-                .font(.title2.bold())
-            Text("Add friends, see their wins, and share yours.")
-                .foregroundStyle(.secondary)
-                .font(.subheadline)
-        }
-    }
-
-    private var inviteCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("Invites & adds", systemImage: "person.crop.circle.badge.plus")
-                    .font(.headline)
-                Spacer()
-                Button("Invite") {}
-                    .buttonStyle(.borderedProminent)
-            }
-
-            ForEach(getFilteredInvites(), id: \.id) { friend in
-                HStack {
-                    avatarCircle(initials(from: friend.name))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(friend.name).font(.headline)
-                        Text("Streak: \(friend.streak) days").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(friend.status) {}
-                        .buttonStyle(friend.status == "Accept" ? .borderedProminent : .bordered)
-                }
-                .padding(.vertical, 6)
-            }
-        }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.ultraThinMaterial))
-        .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 3)
-    }
-    
-    private func getFilteredInvites() -> [Friend] {
-        searchText.isEmpty ? invites : invites.filter { $0.name.lowercased().contains(searchText.lowercased()) }
-    }
-
-    private var leaderboardCard: some View {
-        let entries = sampleLeaderboard
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("This week", systemImage: "trophy.fill")
-                    .font(.headline)
-                Spacer()
-                Text("Calories logged")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            ForEach(entries) { entry in
-                HStack(spacing: 10) {
-                    Text("#\(entry.rank)")
-                        .font(.caption.weight(.bold))
-                        .frame(width: 28, height: 28)
-                        .background(entry.rank == 1 ? Color.yellow.opacity(0.3) : Color.gray.opacity(0.12))
-                        .clipShape(Circle())
-                    Text(entry.name).font(.headline)
-                    Spacer()
-                    Text("\(entry.points) kcal")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            }
-        }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.ultraThinMaterial))
-        .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 3)
-    }
-
-    private var feedCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("Community feed", systemImage: "bubble.left.and.bubble.right.fill")
-                    .font(.headline)
-                Spacer()
-            }
-
-            ForEach(feed) { post in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 8) {
-                        avatarCircle(initials(from: post.author))
-                        Text(post.author).font(.headline)
-                    }
-                    Text(post.action)
-                        .font(.subheadline.weight(.semibold))
-                    Text(post.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 6)
-            }
-
-            Button {
-                // TODO: hook into real feed
-            } label: {
-                HStack {
-                    Spacer()
-                    Text("See more updates")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-            }
-            .buttonStyle(.bordered)
-        }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.ultraThinMaterial))
-        .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 3)
-    }
-
-
-
-    private var sampleLeaderboard: [LeaderboardEntry] {
-        [
-            LeaderboardEntry(rank: 1, name: "You", points: 2612),
-            LeaderboardEntry(rank: 2, name: "Priya", points: 2480),
-            LeaderboardEntry(rank: 3, name: "Alex", points: 2320),
-            LeaderboardEntry(rank: 4, name: "Sam", points: 2105)
-        ]
-    }
-
-    private func avatarCircle(_ text: String) -> some View {
-        Circle()
-            .fill(LinearGradient(colors: [Theme.accent, Theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing))
-            .frame(width: 36, height: 36)
-            .overlay(Text(text).font(.caption.weight(.bold)).foregroundColor(.white))
-    }
-
-    private func initials(from name: String) -> String {
-        let parts = name.split(separator: " ").map { String($0.prefix(1)) }
-        let joined = parts.prefix(2).joined()
-        return joined.isEmpty ? "🙂" : joined.uppercased()
-    }
-}
-
-private struct Friend: Identifiable {
-    let id = UUID()
-    let name: String
-    let status: String
-    let streak: Int
-}
-
-private struct SocialPost: Identifiable {
-    let id = UUID()
-    let author: String
-    let action: String
-    let detail: String
-}
-
-private struct LeaderboardEntry: Identifiable {
-    let id = UUID()
-    let rank: Int
-    let name: String
-    let points: Int
 }
 
 // MARK: - Home Components
