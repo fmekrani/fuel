@@ -139,6 +139,13 @@ class CalorieStore: ObservableObject {
         macrosForDay(Date())
     }
     
+    // NEW: Add entry with explicit update
+    func addEntry(_ entry: CalorieEntry) {
+        entries.append(entry)
+        saveEntries()
+        objectWillChange.send()
+    }
+    
     var macros7DayAverage: (protein: Double, carbs: Double, fats: Double) {
         let cal = calendar
         let today = cal.startOfDay(for: Date())

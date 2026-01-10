@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import PhotosUI
 import Charts
+import CoreLocation
 
 // MARK: - Theme
 
@@ -100,15 +101,13 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                HomeSummaryCard(
-                    caloriesToday: caloriesToday,
-                    caloriesLeft: caloriesLeft,
-                    dailyGoal: dailyGoal,
-                    macros: macros
-                )
-                .padding(.horizontal)
+                HomeSummaryCard(store: store)
+                    .padding(.horizontal)
 
                 FriendsView()
+                    .padding(.horizontal)
+
+                LeaderboardPreviewCard()
                     .padding(.horizontal)
 
                 HomeQuickActions(store: store, workoutHistory: workoutHistory)
@@ -142,13 +141,15 @@ struct HomeView: View {
 }
 
 private struct HomeSummaryCard: View {
-    let caloriesToday: Int
-    let caloriesLeft: Int
-    let dailyGoal: Int
-    let macros: (protein: Double, carbs: Double, fats: Double)
+    var store: CalorieStore
 
     var body: some View {
-        VStack(spacing: 14) {
+        let caloriesToday = store.consumedToday
+        let caloriesLeft = max((store.dailyGoal ?? 0) - caloriesToday, 0)
+        let dailyGoal = store.dailyGoal ?? 0
+        let macros = store.macrosToday
+        
+        return VStack(spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Today's Summary")
@@ -422,7 +423,7 @@ struct CalorieView: View {
                                 .frame(width: cardWidth, height: cardHeight)
                             }
                             
-                            // BOTTOM ROW: Weight Tracker (ADD THIS)
+                            // BOTTOM ROW: Weight Tracker + Run
                             HStack(spacing: inter) {
                                 NavigationLink {
                                     WeightTrackerView()
@@ -435,9 +436,16 @@ struct CalorieView: View {
                                 }
                                 .frame(width: cardWidth, height: cardHeight)
                                 
-                                // Empty space to maintain grid
-                                Color.clear
-                                    .frame(width: cardWidth, height: cardHeight)
+                                NavigationLink {
+                                    RunTrackingView()
+                                } label: {
+                                    DashboardCard(
+                                        title: "Run",
+                                        subtitle: "Track runs",
+                                        systemImage: "figure.run"
+                                    )
+                                }
+                                .frame(width: cardWidth, height: cardHeight)
                             }
                         }
                         .padding(.horizontal, hPad)
@@ -525,7 +533,7 @@ struct CountCaloriesView: View {
         let carbs = food.carbs * weightMultiplier
         let fats = food.fats * weightMultiplier
         
-        store.entries.append(CalorieEntry(
+        store.addEntry(CalorieEntry(
             date: Date(),
             calories: calories,
             protein: protein,
@@ -1154,6 +1162,27 @@ struct OverallStatsView: View {
             .sorted { $0.date < $1.date }
     }
 
+    private var runDailyStats: [RunDayStat] {
+        guard let start = chartStartDate else { return [] }
+        var map: [Date: (distance: Double, pace: Double, count: Int)] = [:]
+        let anchor = calendar.startOfDay(for: start)
+
+        for session in workoutHistory.sessions {
+            let day = calendar.startOfDay(for: session.date)
+            guard day >= anchor else { continue }
+            let current = map[day] ?? (0, 0, 0)
+            map[day] = (
+                distance: current.distance + session.volume / 100,
+                pace: (current.pace * Double(current.count) + session.topWeight) / Double(current.count + 1),
+                count: current.count + 1
+            )
+        }
+
+        return map
+            .map { RunDayStat(date: $0.key, distance: $0.value.distance, pace: $0.value.pace) }
+            .sorted { $0.date < $1.date }
+    }
+
     private var macroSeries: [MacroPoint] {
         guard let start = chartStartDate else { return [] }
         let anchor = calendar.startOfDay(for: start)
@@ -1211,6 +1240,7 @@ struct OverallStatsView: View {
                     hydrationStatusCard
                     weightStatusCard
                     workoutTrendCard
+                    runTrendCard
                     macroTrendCard
                     hydrationTrendCard
                     Spacer(minLength: 20)
@@ -1291,6 +1321,48 @@ struct OverallStatsView: View {
                     .interpolationMethod(.monotone)
                     .lineStyle(.init(lineWidth: 2))
                     .foregroundStyle(Color.red)
+                    .symbol(Circle())
+                    .symbolSize(30)
+                }
+                .frame(height: 200)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.ultraThinMaterial))
+        .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
+    }
+
+    // MARK: - Run Trend
+    private var runTrendCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "figure.run")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                Text("Runs: Distance & Pace")
+                    .font(.headline)
+                Spacer()
+            }
+
+            if runDailyStats.isEmpty {
+                Text("Complete a run to see your trend.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            } else {
+                Chart(runDailyStats) {
+                    BarMark(
+                        x: .value("Date", $0.date, unit: .day),
+                        y: .value("Distance", $0.distance)
+                    )
+                    .foregroundStyle(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.28))
+
+                    LineMark(
+                        x: .value("Date", $0.date, unit: .day),
+                        y: .value("Pace", $0.pace)
+                    )
+                    .interpolationMethod(.monotone)
+                    .lineStyle(.init(lineWidth: 2))
+                    .foregroundStyle(Color(red: 0.86, green: 0.18, blue: 0.18))
                     .symbol(Circle())
                     .symbolSize(30)
                 }
@@ -1619,6 +1691,13 @@ private struct WorkoutDayStat: Identifiable {
     let date: Date
     let topWeight: Double
     let volume: Double
+}
+
+private struct RunDayStat: Identifiable {
+    var id: Date { date }
+    let date: Date
+    let distance: Double
+    let pace: Double
 }
 
 private struct MacroPoint: Identifiable {
@@ -2592,6 +2671,7 @@ struct WorkoutPlanEditor: View {
                 Section("Exercises") {
                     ForEach($plan) { $exercise in
                         ExerciseEditor(exercise: $exercise)
+                            .environmentObject(workoutHistory)
                     }
                     .onDelete { plan.remove(atOffsets: $0) }
 
@@ -2664,6 +2744,7 @@ struct CustomPlanEditor: View {
 // MARK: - Exercises inside a specific day (reuses ExerciseEditor)
 struct DayExerciseEditor: View {
     @Binding var day: WPDayPlan
+    @EnvironmentObject var workoutHistory: WorkoutHistoryStore
     @State private var newExercise = ""
 
     var body: some View {
@@ -2671,6 +2752,7 @@ struct DayExerciseEditor: View {
             Section("Exercises") {
                 ForEach($day.exercises) { $exercise in
                     ExerciseEditor(exercise: $exercise)
+                        .environmentObject(workoutHistory)
                 }
                 .onDelete { day.exercises.remove(atOffsets: $0) }
                 .onMove { from, to in day.exercises.move(fromOffsets: from, toOffset: to) }
@@ -2882,7 +2964,7 @@ struct CustomFoodFormView: View {
             fats: fatsVal
         )
         
-        store.entries.append(entry)
+        store.addEntry(entry)
         isPresented = false
     }
 }
@@ -3186,7 +3268,7 @@ struct FoodIdentifierView: View {
             fats: fats
         )
         
-        store.entries.append(entry)
+        store.addEntry(entry)
         resetImage()
     }
 }
@@ -3256,46 +3338,1634 @@ struct CameraPicker: UIViewControllerRepresentable {
 
 // MARK: - Friends View
 struct FriendsView: View {
+    @State private var showRecentSearches = false
+    @State private var likes: [String: Bool] = [:]
+    @State private var celebrates: [String: Bool] = [:]
+    @State private var likeCounts: [String: Int] = [:]
+    @State private var celebrateCounts: [String: Int] = [:]
+    @State private var commentCounts: [String: Int] = [:]
+    @State private var friendRequests: [String: Bool] = [:]
+
+    // MARK: - Mock Data
+    let mockFeedPosts: [FeedPost] = [
+        FeedPost(id: "1", userId: "sarah_fit", username: "Sarah Chen", avatar: "SC", relationship: "friend", timestamp: "2 hours ago", type: .run, distance: 5.2, duration: 2535, pace: 8.08, calories: 487, caption: "Great morning run! 💪", commentCount: 3),
+        FeedPost(id: "2", userId: "alex_gains", username: "Alex Rivera", avatar: "AR", relationship: "following", timestamp: "4 hours ago", type: .workout, duration: 2700, exerciseCount: 8, calories: 320, caption: "Crushed legs day! 🔥", commentCount: 24),
+        FeedPost(id: "3", userId: "jordan_run", username: "Jordan Mills", avatar: "JM", relationship: "friend", timestamp: "6 hours ago", type: .run, distance: 8.5, duration: 3900, pace: 7.65, calories: 612, caption: nil, commentCount: 7),
+    ]
+
+    let recentSearchUsers = [
+        ("emma_fit", "Emma Wilson", "EW"),
+        ("tyler_gains", "Tyler Johnson", "TJ"),
+        ("sofia_run", "Sofia Martinez", "SM"),
+        ("lucas_coach", "Lucas Kim", "LK"),
+    ]
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header with Add Friend button
             HStack {
-                Label("Friends", systemImage: "person.2.fill")
-                    .font(.headline)
-                Spacer()
-                NavigationLink {
-                    Text("Friends Page")
-                        .navigationTitle("Friends")
-                } label: {
-                    Image(systemName: "chevron.right")
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Friends Feed", systemImage: "person.2.fill")
+                        .font(.headline)
+                    Text("Connect & celebrate workouts")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-            }
-            
-            VStack(spacing: 12) {
-                Text("No friends yet")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Button(action: {}) {
-                    Text("Add Friends")
-                        .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button(action: { showRecentSearches = true }) {
+                    Image(systemName: "person.badge.plus")
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                        .frame(width: 28, height: 28)
                         .background(Color(red: 0.86, green: 0.18, blue: 0.18))
-                        .cornerRadius(10)
+                        .cornerRadius(6)
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(12)
-            .background(Color(.systemGray6))
-            .cornerRadius(12)
+
+            // Compact Feed
+            VStack(spacing: 10) {
+                ForEach(mockFeedPosts.prefix(2)) { post in
+                    CompactFeedPostCard(
+                        post: post,
+                        isLiked: likes[post.id] ?? false,
+                        isCelebrated: celebrates[post.id] ?? false,
+                        likeCount: likeCounts[post.id] ?? Int.random(in: 10...200),
+                        celebrateCount: celebrateCounts[post.id] ?? Int.random(in: 5...150),
+                        onLike: {
+                            let isLiked = likes[post.id] ?? false
+                            likes[post.id] = !isLiked
+                            likeCounts[post.id] = (likeCounts[post.id] ?? 0) + (isLiked ? -1 : 1)
+                        },
+                        onCelebrate: {
+                            let isCelebrated = celebrates[post.id] ?? false
+                            celebrates[post.id] = !isCelebrated
+                            celebrateCounts[post.id] = (celebrateCounts[post.id] ?? 0) + (isCelebrated ? -1 : 1)
+                        }
+                    )
+                }
+            }
+
+            // View All Link
+            NavigationLink {
+                FullFeedView(
+                    mockFeedPosts: mockFeedPosts,
+                    recentSearchUsers: recentSearchUsers,
+                    likes: $likes,
+                    celebrates: $celebrates,
+                    likeCounts: $likeCounts,
+                    celebrateCounts: $celebrateCounts,
+                    commentCounts: $commentCounts,
+                    friendRequests: $friendRequests
+                )
+            } label: {
+                HStack {
+                    Text("View all posts")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+            }
+        }
+        .padding(16)
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: 2)
+        .sheet(isPresented: $showRecentSearches) {
+            RecentSearchesSheet(isPresented: $showRecentSearches, recentSearchUsers: recentSearchUsers, friendRequests: $friendRequests)
+        }
+    }
+}
+
+// MARK: - Compact Feed Post Card (for home)
+
+struct CompactFeedPostCard: View {
+    let post: FeedPost
+    let isLiked: Bool
+    let isCelebrated: Bool
+    let likeCount: Int
+    let celebrateCount: Int
+    let onLike: () -> Void
+    let onCelebrate: () -> Void
+
+    @State private var likeScale: CGFloat = 1.0
+    @State private var celebrateScale: CGFloat = 1.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.2))
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Text(post.avatar)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                    )
+
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text("@\(post.username)")
+                            .font(.system(size: 12, weight: .semibold))
+                        if let relationship = post.relationship {
+                            Text(relationship.capitalized)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Color.gray.opacity(0.4))
+                                .cornerRadius(3)
+                        }
+                    }
+                    Text(post.timestamp)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+
+            // Workout Summary
+            HStack {
+                if post.type == .run {
+                    Text("🏃 \(String(format: "%.1f", post.distance ?? 0)) mi • \(formatDuration(post.duration ?? 0))")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary)
+                } else {
+                    Text("🏋️ \(post.duration.map { formatDuration($0) } ?? "0m") • \(post.exerciseCount ?? 0) ex")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary)
+                }
+                Spacer()
+            }
+            .padding(8)
+            .background(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.08))
+            .cornerRadius(6)
+
+            // Reaction Bar (Compact)
+            HStack(spacing: 12) {
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        likeScale = 1.3
+                        onLike()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            likeScale = 1.0
+                        }
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: isLiked ? "heart.fill" : "heart")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(isLiked ? .red : .secondary)
+                            .scaleEffect(likeScale)
+                        Text("\(likeCount)")
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        celebrateScale = 1.3
+                        onCelebrate()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            celebrateScale = 1.0
+                        }
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Text(isCelebrated ? "🔥" : "🔥")
+                            .font(.system(size: 12))
+                            .opacity(isCelebrated ? 1.0 : 0.5)
+                            .scaleEffect(celebrateScale)
+                        Text("\(celebrateCount)")
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Spacer()
+            }
+            .padding(.top, 2)
+        }
+        .padding(10)
+        .background(Color(.systemGray6))
+        .cornerRadius(10)
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        let mins = (seconds % 3600) / 60
+        return "\(mins)m"
+    }
+}
+
+// MARK: - Comments Sheet
+
+struct CommentsSheet: View {
+    @Binding var isPresented: Bool
+    let post: FeedPost
+    let onCommentAdded: () -> Void
+    @State private var commentText = ""
+    @State private var comments: [CommentData] = []
+
+    init(isPresented: Binding<Bool>, post: FeedPost, onCommentAdded: @escaping () -> Void) {
+        self._isPresented = isPresented
+        self.post = post
+        self.onCommentAdded = onCommentAdded
+        // Mock comments
+        self._comments = State(initialValue: [
+            CommentData(id: "c1", author: "emma_fit", avatar: "EF", text: "That pace is incredible! 🔥", timestamp: "2h ago"),
+            CommentData(id: "c2", author: "tyler_gains", avatar: "TG", text: "Great effort! Keep it up 💪", timestamp: "1h ago"),
+            CommentData(id: "c3", author: "sofia_run", avatar: "SR", text: "Joined the run club?", timestamp: "45m ago"),
+        ])
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Text("Comments")
+                        .font(.system(size: 18, weight: .bold))
+                    Spacer()
+                    Button(action: { isPresented = false }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(16)
+
+                Divider()
+
+                // Comments List
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(comments) { comment in
+                            HStack(alignment: .top, spacing: 10) {
+                                Circle()
+                                    .fill(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.2))
+                                    .frame(width: 32, height: 32)
+                                    .overlay(
+                                        Text(comment.avatar)
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                                    )
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 8) {
+                                        Text("@\(comment.author)")
+                                            .font(.system(size: 12, weight: .semibold))
+                                        Text(comment.timestamp)
+                                            .font(.system(size: 10, weight: .regular))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Text(comment.text)
+                                        .font(.system(size: 13, weight: .regular))
+                                        .foregroundColor(.primary)
+                                        .lineLimit(3)
+                                }
+
+                                Spacer()
+
+                                Button(action: {}) {
+                                    Image(systemName: "heart")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(10)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(8)
+                        }
+                    }
+                    .padding(16)
+                }
+
+                Divider()
+
+                // Comment Input
+                HStack(spacing: 10) {
+                    TextField("Write a comment...", text: $commentText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14, weight: .regular))
+                        .padding(10)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+
+                    Button(action: {
+                        if !commentText.isEmpty {
+                            let newComment = CommentData(
+                                id: "c\(comments.count + 1)",
+                                author: "you_fitness",
+                                avatar: "YF",
+                                text: commentText,
+                                timestamp: "now"
+                            )
+                            comments.append(newComment)
+                            onCommentAdded()
+                            commentText = ""
+                        }
+                    }) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(commentText.isEmpty ? .secondary : Color(red: 0.86, green: 0.18, blue: 0.18))
+                    }
+                    .disabled(commentText.isEmpty)
+                }
+                .padding(16)
+            }
+            .background(Color(.systemBackground))
+            .presentationDetents([.medium, .large])
+        }
+    }
+}
+
+// MARK: - Comment Data Model
+
+struct CommentData: Identifiable {
+    let id: String
+    let author: String
+    let avatar: String
+    let text: String
+    let timestamp: String
+}
+
+// MARK: - Full Feed View (Navigation Link)
+
+struct FullFeedView: View {
+    let mockFeedPosts: [FeedPost]
+    let recentSearchUsers: [(id: String, name: String, avatar: String)]
+    @Binding var likes: [String: Bool]
+    @Binding var celebrates: [String: Bool]
+    @Binding var likeCounts: [String: Int]
+    @Binding var celebrateCounts: [String: Int]
+    @Binding var commentCounts: [String: Int]
+    @Binding var friendRequests: [String: Bool]
+    @State private var showRecentSearches = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Top bar with small Add Friend button
+                HStack {
+                    Text("Feed")
+                        .font(.system(size: 28, weight: .bold))
+                    Spacer()
+                    Button(action: { showRecentSearches = true }) {
+                        Image(systemName: "person.badge.plus")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Color(red: 0.86, green: 0.18, blue: 0.18))
+                            .cornerRadius(8)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+                // Social Feed
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(mockFeedPosts) { post in
+                            FeedPostCard(
+                                post: post,
+                                isLiked: likes[post.id] ?? false,
+                                isCelebrated: celebrates[post.id] ?? false,
+                                likeCount: likeCounts[post.id] ?? Int.random(in: 10...200),
+                                celebrateCount: celebrateCounts[post.id] ?? Int.random(in: 5...150),
+                                commentCount: commentCounts[post.id] ?? post.commentCount,
+                                onLike: {
+                                    let isLiked = likes[post.id] ?? false
+                                    likes[post.id] = !isLiked
+                                    likeCounts[post.id] = (likeCounts[post.id] ?? 0) + (isLiked ? -1 : 1)
+                                },
+                                onCelebrate: {
+                                    let isCelebrated = celebrates[post.id] ?? false
+                                    celebrates[post.id] = !isCelebrated
+                                    celebrateCounts[post.id] = (celebrateCounts[post.id] ?? 0) + (isCelebrated ? -1 : 1)
+                                },
+                                onComment: {
+                                    commentCounts[post.id] = (commentCounts[post.id] ?? post.commentCount) + 1
+                                },
+                                onAddFriend: {
+                                    friendRequests[post.userId] = true
+                                }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+            }
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showRecentSearches) {
+                RecentSearchesSheet(isPresented: $showRecentSearches, recentSearchUsers: recentSearchUsers, friendRequests: $friendRequests)
+            }
+        }
+    }
+}
+
+// MARK: - Models
+
+struct FeedPost: Identifiable {
+    let id: String
+    let userId: String
+    let username: String
+    let avatar: String
+    let relationship: String?
+    let timestamp: String
+    let type: WorkoutType
+    let distance: Double?
+    let duration: Int?
+    let pace: Double?
+    let exerciseCount: Int?
+    let calories: Int
+    let caption: String?
+    let commentCount: Int
+
+    init(
+        id: String,
+        userId: String,
+        username: String,
+        avatar: String,
+        relationship: String? = nil,
+        timestamp: String,
+        type: WorkoutType,
+        distance: Double? = nil,
+        duration: Int? = nil,
+        pace: Double? = nil,
+        exerciseCount: Int? = nil,
+        calories: Int,
+        caption: String? = nil,
+        commentCount: Int
+    ) {
+        self.id = id
+        self.userId = userId
+        self.username = username
+        self.avatar = avatar
+        self.relationship = relationship
+        self.timestamp = timestamp
+        self.type = type
+        self.distance = distance
+        self.duration = duration
+        self.pace = pace
+        self.exerciseCount = exerciseCount
+        self.calories = calories
+        self.caption = caption
+        self.commentCount = commentCount
+    }
+
+    enum WorkoutType {
+        case run, workout
+    }
+}
+
+// MARK: - Feed Post Card
+
+struct FeedPostCard: View {
+    let post: FeedPost
+    let isLiked: Bool
+    let isCelebrated: Bool
+    let likeCount: Int
+    let celebrateCount: Int
+    let commentCount: Int
+    let onLike: () -> Void
+    let onCelebrate: () -> Void
+    let onComment: () -> Void
+    let onAddFriend: () -> Void
+
+    @State private var likeScale: CGFloat = 1.0
+    @State private var celebrateScale: CGFloat = 1.0
+    @State private var showComments = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.2))
+                    .frame(width: 40, height: 40)
+                    .overlay(
+                        Text(post.avatar)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text("@\(post.username)")
+                            .font(.system(size: 14, weight: .semibold))
+                        if let relationship = post.relationship {
+                            Text(relationship.capitalized)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Color.gray.opacity(0.4))
+                                .cornerRadius(4)
+                        }
+                    }
+                    Text(post.timestamp)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                if post.relationship != "friend" && post.relationship != "following" {
+                    Button(action: onAddFriend) {
+                        Image(systemName: "person.badge.plus")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 28, height: 28)
+                            .background(Color(red: 0.86, green: 0.18, blue: 0.18))
+                            .cornerRadius(6)
+                    }
+                }
+            }
+
+            // Workout Summary
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    if post.type == .run {
+                        Text("🏃 \(String(format: "%.1f", post.distance ?? 0)) mi • \(formatDuration(post.duration ?? 0)) • \(String(format: "%.2f", post.pace ?? 0))/mi")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.primary)
+                    } else {
+                        Text("🏋️ \(post.duration.map { formatDuration($0) } ?? "0m") • \(post.exerciseCount ?? 0) exercises • \(post.calories) kcal")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                    Spacer()
+                }
+                .padding(10)
+                .background(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.08))
+                .cornerRadius(8)
+
+                if let caption = post.caption {
+                    Text(caption)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.primary)
+                }
+            }
+
+            // Reaction Bar
+            HStack(spacing: 16) {
+                // Like
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        likeScale = 1.3
+                        onLike()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            likeScale = 1.0
+                        }
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isLiked ? "heart.fill" : "heart")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(isLiked ? .red : .secondary)
+                            .scaleEffect(likeScale)
+                        Text("\(likeCount)")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                // Celebrate
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        celebrateScale = 1.3
+                        onCelebrate()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            celebrateScale = 1.0
+                        }
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Text(isCelebrated ? "🔥" : "🔥")
+                            .font(.system(size: 14))
+                            .opacity(isCelebrated ? 1.0 : 0.5)
+                            .scaleEffect(celebrateScale)
+                        Text("\(celebrateCount)")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                // Comment (Now Interactive)
+                Button(action: { showComments = true }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bubble.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Text("\(commentCount)")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Spacer()
+            }
+            .padding(.top, 4)
+        }
+        .padding(16)
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
+        .sheet(isPresented: $showComments) {
+            CommentsSheet(isPresented: $showComments, post: post, onCommentAdded: onComment)
+        }
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        let hours = seconds / 3600
+        let mins = (seconds % 3600) / 60
+        if hours > 0 {
+            return "\(hours)h \(mins)m"
+        }
+        return "\(mins)m"
+    }
+}
+
+// MARK: - Recent Searches Sheet
+
+struct RecentSearchesSheet: View {
+    @Binding var isPresented: Bool
+    let recentSearchUsers: [(id: String, name: String, avatar: String)]
+    @Binding var friendRequests: [String: Bool]
+    @State private var searchText = ""
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("Add Friends")
+                        .font(.system(size: 20, weight: .bold))
+                    Spacer()
+                    Button(action: { isPresented = false }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+
+                // Search Bar
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("Search by name or username", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 16, weight: .regular))
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color(.systemGray6))
+                .cornerRadius(10)
+                .padding(.horizontal, 16)
+
+                // Recent Searches
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Recent Searches")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 16)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(recentSearchUsers, id: \.id) { user in
+                                VStack(spacing: 8) {
+                                    ZStack(alignment: .topTrailing) {
+                                        Circle()
+                                            .fill(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.2))
+                                            .frame(width: 48, height: 48)
+                                            .overlay(
+                                                Text(user.avatar)
+                                                    .font(.system(size: 16, weight: .semibold))
+                                                    .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                                            )
+
+                                        Button(action: { friendRequests[user.id] = true }) {
+                                            Image(systemName: "plus.circle.fill")
+                                                .font(.system(size: 16))
+                                                .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                                                .background(Color(.systemBackground))
+                                                .clipShape(Circle())
+                                        }
+                                    }
+
+                                    Text(user.name)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .lineLimit(1)
+                                }
+                                .frame(width: 80)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                }
+
+                Spacer()
+            }
+            .background(Color(.systemBackground))
+            .presentationDetents([.medium, .large])
+        }
+    }
+}
+
+// MARK: - Run Tracking View (Full Page)
+struct RunTrackingView: View {
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    RunCard()
+                        .padding(.horizontal)
+                }
+                .padding(.vertical, 16)
+            }
+            .navigationTitle("Run Tracking")
+            .navigationBarTitleDisplayMode(.large)
+        }
+    }
+}
+
+// MARK: - Run Data Model
+struct RunData: Identifiable, Codable {
+    let id: UUID
+    let date: Date
+    let distance: Double          // in miles
+    let duration: Int             // in seconds
+    let pace: Double              // in minutes per mile
+    let calories: Int
+    let intensity: RunIntensity
+    
+    var formattedDistance: String {
+        String(format: "%.2f mi", distance)
+    }
+    
+    var formattedDuration: String {
+        let minutes = duration / 60
+        let seconds = duration % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    var formattedPace: String {
+        let minutes = Int(pace)
+        let seconds = Int((pace - Double(minutes)) * 60)
+        return String(format: "%d:%02d /mi", minutes, seconds)
+    }
+}
+
+enum RunIntensity: String, Codable {
+    case easy = "Easy"
+    case moderate = "Moderate"
+    case hard = "Hard"
+    
+    static func calculate(pace: Double) -> RunIntensity {
+        if pace < 8.0 {
+            return .hard
+        } else if pace < 10.0 {
+            return .moderate
+        } else {
+            return .easy
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .easy: return Color.green
+        case .moderate: return Color.orange
+        case .hard: return Color(red: 0.86, green: 0.18, blue: 0.18)
+        }
+    }
+}
+
+// MARK: - Run Card
+struct RunCard: View {
+    @State private var isRunning = false
+    @State private var elapsedSeconds = 0
+    @State private var totalDistance: Double = 0
+    @State private var currentPace: Double = 0
+    @State private var averagePace: Double = 0
+    @State private var runSummary: RunData?
+    @State private var timer: Timer?
+    @State private var locationManager = LocationManager()
+    @State private var showSaveSheet = false
+    @State private var isPulsing = false
+    
+    var body: some View {
+        VStack(alignment: .center, spacing: 0) {
+            if let summary = runSummary {
+                // MARK: Post-Run Summary State
+                RunSummaryViewRefined(data: summary, onNewRun: resetRun, onSave: { showSaveSheet = true })
+                    .transition(.opacity.combined(with: .scale))
+            } else if isRunning {
+                // MARK: Running State
+                VStack(alignment: .center, spacing: 20) {
+                    // Header with pulsing indicator
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color(red: 0.86, green: 0.18, blue: 0.18))
+                            .frame(width: 8, height: 8)
+                            .opacity(isPulsing ? 1 : 0.4)
+                            .animation(.easeInOut(duration: 1).repeatForever(), value: isPulsing)
+                        
+                        Text("Running")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                    .onAppear { isPulsing = true }
+                    
+                    // Hero Timer - Large and centered
+                    VStack(spacing: 6) {
+                        Text("Elapsed Time")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text(formatTime(elapsedSeconds))
+                            .font(.system(size: 52, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                    
+                    // Metrics in equal-width cards
+                    HStack(spacing: 12) {
+                        // Distance Card
+                        VStack(alignment: .center, spacing: 8) {
+                            Label("Distance", systemImage: "location.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.secondary)
+                            
+                            Text(String(format: "%.2f", totalDistance))
+                                .font(.system(size: 24, weight: .bold, design: .default))
+                                .foregroundColor(.primary)
+                            
+                            Text("mi")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                        
+                        // Avg Pace Card
+                        VStack(alignment: .center, spacing: 8) {
+                            Label("Avg Pace", systemImage: "timer")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.secondary)
+                            
+                            Text(formatPace(averagePace))
+                                .font(.system(size: 24, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                            
+                            Text("/mi")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 16)
+                    
+                    // End Run Button with elevation
+                    Button(action: endRun) {
+                        Text("End Run")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color(red: 0.86, green: 0.18, blue: 0.18))
+                            .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .scaleEffect(1.0)
+                }
+                .background(Color(.systemBackground))
+                .cornerRadius(16)
+                .transition(.opacity.combined(with: .scale))
+            } else {
+                // MARK: Idle State
+                VStack(alignment: .center, spacing: 16) {
+                    Image(systemName: "figure.run")
+                        .font(.system(size: 36))
+                        .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                    
+                    VStack(alignment: .center, spacing: 4) {
+                        Text("Ready to Run?")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        
+                        Text("Track your distance, pace & calories in real-time")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    
+                    Button(action: startRun) {
+                        Text("Start Run")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color(red: 0.86, green: 0.18, blue: 0.18))
+                            .cornerRadius(12)
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(16)
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+                .transition(.opacity)
+            }
         }
         .padding(16)
         .background(.ultraThinMaterial)
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: 3)
+        .sheet(isPresented: $showSaveSheet) {
+            if let summary = runSummary {
+                Text("✓ Run saved! \(summary.formattedDistance) • \(summary.formattedDuration)")
+                    .padding()
+            }
+        }
+    }
+    
+    private func startRun() {
+        withAnimation {
+            isRunning = true
+            elapsedSeconds = 0
+            totalDistance = 0
+            currentPace = 0
+            averagePace = 0
+            runSummary = nil
+            locationManager.startTracking()
+            
+            timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                elapsedSeconds += 1
+                updateMetrics()
+            }
+        }
+    }
+    
+    private func endRun() {
+        withAnimation {
+            isRunning = false
+            timer?.invalidate()
+            timer = nil
+            locationManager.stopTracking()
+            
+            let intensity = RunIntensity.calculate(pace: averagePace)
+            let estimatedCalories = Int(Double(totalDistance) * 100)
+            
+            runSummary = RunData(
+                id: UUID(),
+                date: Date(),
+                distance: totalDistance,
+                duration: elapsedSeconds,
+                pace: averagePace,
+                calories: estimatedCalories,
+                intensity: intensity
+            )
+        }
+    }
+    
+    private func resetRun() {
+        withAnimation {
+            isRunning = false
+            elapsedSeconds = 0
+            totalDistance = 0
+            currentPace = 0
+            averagePace = 0
+            runSummary = nil
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+    
+    private func updateMetrics() {
+        totalDistance = locationManager.totalDistance
+        if elapsedSeconds > 0 && totalDistance > 0 {
+            let durationInMinutes = Double(elapsedSeconds) / 60.0
+            averagePace = durationInMinutes / totalDistance
+        }
+    }
+    
+    private func formatTime(_ seconds: Int) -> String {
+        let minutes = seconds / 60
+        let secs = seconds % 60
+        return String(format: "%02d:%02d", minutes, secs)
+    }
+    
+    private func formatPace(_ pace: Double) -> String {
+        let minutes = Int(pace)
+        let seconds = Int((pace - Double(minutes)) * 60)
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
+
+// MARK: - Run Summary View (Refined)
+struct RunSummaryViewRefined: View {
+    let data: RunData
+    var onNewRun: () -> Void
+    var onSave: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .center, spacing: 20) {
+            // Hero Metric - Average Pace
+            VStack(alignment: .center, spacing: 8) {
+                Text("Average Pace")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                
+                Text(data.formattedPace)
+                    .font(.system(size: 44, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                
+                Text("per mile")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            
+            Divider()
+                .padding(.vertical, 4)
+            
+            // Metric Rows
+            VStack(alignment: .leading, spacing: 12) {
+                // Distance Row
+                HStack(spacing: 12) {
+                    Image(systemName: "location.fill")
+                        .font(.subheadline)
+                        .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                        .frame(width: 24)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Distance")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(data.formattedDistance)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.primary)
+                    }
+                    Spacer()
+                }
+                
+                Divider()
+                    .padding(.vertical, 2)
+                
+                // Time Row
+                HStack(spacing: 12) {
+                    Image(systemName: "timer")
+                        .font(.subheadline)
+                        .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                        .frame(width: 24)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Time")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(data.formattedDuration)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.primary)
+                    }
+                    Spacer()
+                }
+                
+                Divider()
+                    .padding(.vertical, 2)
+                
+                // Calories Row
+                HStack(spacing: 12) {
+                    Image(systemName: "flame.fill")
+                        .font(.subheadline)
+                        .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                        .frame(width: 24)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Calories")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("\(data.calories) kcal")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.primary)
+                    }
+                    Spacer()
+                }
+            }
+            
+            // Intensity Pill Badge
+            HStack {
+                Spacer()
+                
+                Label(data.intensity.rawValue, systemImage: "bolt.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(data.intensity.color)
+                    .cornerRadius(8)
+                
+                Spacer()
+            }
+            
+            // Action Buttons
+            VStack(spacing: 10) {
+                // Primary: Save Run
+                Button(action: onSave) {
+                    Text("Save Run")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color(red: 0.86, green: 0.18, blue: 0.18))
+                        .cornerRadius(12)
+                }
+                
+                // Secondary: Start New Run
+                Button(action: onNewRun) {
+                    Text("Start New Run")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color(red: 0.86, green: 0.18, blue: 0.18), lineWidth: 1.5)
+                        )
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+}
+
+// MARK: - Old Run Summary View (kept for reference)
+struct RunSummaryView: View {
+    let data: RunData
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            // Hero metric: Average Pace
+            VStack(spacing: 4) {
+                Text("Average Pace")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(data.formattedPace)
+                    .font(.system(size: 28, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+            }
+            
+            Divider()
+            
+            // Other metrics
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Distance", systemImage: "location.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Text(data.formattedDistance)
+                        .font(.headline)
+                }
+                Spacer()
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Time", systemImage: "timer")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Text(data.formattedDuration)
+                        .font(.headline)
+                }
+                Spacer()
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Calories", systemImage: "flame.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Text("\(data.calories)")
+                        .font(.headline)
+                }
+            }
+            
+            // Intensity chip
+            HStack {
+                Label(data.intensity.rawValue, systemImage: "bolt.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(data.intensity.color)
+                    .cornerRadius(8)
+                Spacer()
+            }
+        }
+        .padding(12)
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - Location Manager
+class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+    @Published var totalDistance: Double = 0
+    private var locationManager = CLLocationManager()
+    private var lastLocation: CLLocationCoordinate2D?
+    
+    override init() {
+        super.init()
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+    }
+    
+    func startTracking() {
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
+        lastLocation = nil
+        totalDistance = 0
+    }
+    
+    func stopTracking() {
+        locationManager.stopUpdatingLocation()
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let current = locations.last else { return }
+        
+        if let last = lastLocation {
+            let distance = CLLocationCoordinate2D(latitude: last.latitude, longitude: last.longitude)
+                .distance(to: current.coordinate)
+            totalDistance += distance / 1609.34 // Convert meters to miles
+        }
+        
+        lastLocation = current.coordinate
+    }
+}
+
+// MARK: - Leaderboard Models
+
+struct LeaderboardEntry: Identifiable {
+    let id: String
+    let userId: String
+    let username: String
+    let avatar: String
+    let rank: Int
+    let metric: Int
+    let unit: String
+    let trend: Int
+    let isCurrentUser: Bool
+}
+
+enum LeaderboardTab: String, CaseIterable {
+    case workoutStreaks = "Workout Streaks"
+    case postingStreaks = "Posting Streaks"
+    case fastestPace = "Fastest Pace"
+}
+
+// MARK: - Leaderboard Preview Card
+
+struct LeaderboardPreviewCard: View {
+    @State private var showFullLeaderboard = false
+
+    var body: some View {
+        NavigationLink(destination: LeaderboardFullView()) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("🔥")
+                                .font(.system(size: 20))
+                                .rotationEffect(.degrees(Double.random(in: -5...5)))
+                            Text("Workout Streaks")
+                                .font(.system(size: 16, weight: .bold))
+                        }
+                        Text("See who's on fire!")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                }
+
+                Divider()
+
+                HStack(spacing: 16) {
+                    LeaderboardRankBadge(rank: 1, username: "Alex", days: 12, avatar: "AR", isTop: true)
+                    LeaderboardRankBadge(rank: 2, username: "Sarah", days: 10, avatar: "SC", isTop: true)
+                    LeaderboardRankBadge(rank: 3, username: "Jordan", days: 8, avatar: "JM", isTop: true)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Circle()
+                            .fill(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.15))
+                            .frame(width: 32, height: 32)
+                            .overlay(
+                                Text("YF")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                            )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("You're at 7 days! 🔥")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.primary)
+                            Text("Catch up to Alex 👀")
+                                .font(.system(size: 10, weight: .regular))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(10)
+                    .background(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.08))
+                    .cornerRadius(8)
+                }
+            }
+            .padding(16)
+            .background(Color(.systemBackground))
+            .cornerRadius(16)
+            .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: 2)
+        }
+        .foregroundColor(.primary)
+    }
+}
+
+struct LeaderboardRankBadge: View {
+    let rank: Int
+    let username: String
+    let days: Int
+    let avatar: String
+    let isTop: Bool
+
+    var medalEmoji: String {
+        switch rank {
+        case 1: return "🥇"
+        case 2: return "🥈"
+        case 3: return "🥉"
+        default: return ""
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(medalEmoji)
+                .font(.system(size: 20))
+
+            Circle()
+                .fill(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.2))
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Text(avatar)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                )
+
+            VStack(spacing: 2) {
+                Text(username)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                Text("\(days)d")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Full Leaderboard View
+
+struct LeaderboardFullView: View {
+    @State private var selectedTab: LeaderboardTab = .workoutStreaks
+    @State private var selectedTimeFilter = "This Week"
+
+    let mockWorkoutStreaks: [LeaderboardEntry] = [
+        LeaderboardEntry(id: "1", userId: "alex_gains", username: "Alex Rivera", avatar: "AR", rank: 1, metric: 12, unit: "days", trend: 2, isCurrentUser: false),
+        LeaderboardEntry(id: "2", userId: "sarah_fit", username: "Sarah Chen", avatar: "SC", rank: 2, metric: 10, unit: "days", trend: 1, isCurrentUser: false),
+        LeaderboardEntry(id: "3", userId: "jordan_run", username: "Jordan Mills", avatar: "JM", rank: 3, metric: 8, unit: "days", trend: 0, isCurrentUser: false),
+        LeaderboardEntry(id: "4", userId: "you_fitness", username: "You", avatar: "YF", rank: 4, metric: 7, unit: "days", trend: 1, isCurrentUser: true),
+        LeaderboardEntry(id: "5", userId: "casey_train", username: "Casey Park", avatar: "CP", rank: 5, metric: 5, unit: "days", trend: -1, isCurrentUser: false),
+    ]
+
+    let mockPostingStreaks: [LeaderboardEntry] = [
+        LeaderboardEntry(id: "1", userId: "sarah_fit", username: "Sarah Chen", avatar: "SC", rank: 1, metric: 8, unit: "posts", trend: 2, isCurrentUser: false),
+        LeaderboardEntry(id: "2", userId: "alex_gains", username: "Alex Rivera", avatar: "AR", rank: 2, metric: 6, unit: "posts", trend: 1, isCurrentUser: false),
+        LeaderboardEntry(id: "3", userId: "morgan_miles", username: "Morgan Lee", avatar: "ML", rank: 3, metric: 5, unit: "posts", trend: 0, isCurrentUser: false),
+        LeaderboardEntry(id: "4", userId: "you_fitness", username: "You", avatar: "YF", rank: 4, metric: 4, unit: "posts", trend: 1, isCurrentUser: true),
+        LeaderboardEntry(id: "5", userId: "casey_train", username: "Casey Park", avatar: "CP", rank: 5, metric: 3, unit: "posts", trend: 0, isCurrentUser: false),
+    ]
+
+    let mockFastestPace: [LeaderboardEntry] = [
+        LeaderboardEntry(id: "1", userId: "jordan_run", username: "Jordan Mills", avatar: "JM", rank: 1, metric: 7, unit: "45/mi", trend: 0, isCurrentUser: false),
+        LeaderboardEntry(id: "2", userId: "morgan_miles", username: "Morgan Lee", avatar: "ML", rank: 2, metric: 8, unit: "00/mi", trend: 0, isCurrentUser: false),
+        LeaderboardEntry(id: "3", userId: "you_fitness", username: "You", avatar: "YF", rank: 3, metric: 8, unit: "08/mi", trend: 1, isCurrentUser: true),
+        LeaderboardEntry(id: "4", userId: "alex_gains", username: "Alex Rivera", avatar: "AR", rank: 4, metric: 8, unit: "30/mi", trend: 0, isCurrentUser: false),
+        LeaderboardEntry(id: "5", userId: "sarah_fit", username: "Sarah Chen", avatar: "SC", rank: 5, metric: 8, unit: "45/mi", trend: -1, isCurrentUser: false),
+    ]
+
+    var currentLeaderboard: [LeaderboardEntry] {
+        switch selectedTab {
+        case .workoutStreaks:
+            return mockWorkoutStreaks
+        case .postingStreaks:
+            return mockPostingStreaks
+        case .fastestPace:
+            return mockFastestPace
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Tabs
+                HStack(spacing: 0) {
+                    ForEach(LeaderboardTab.allCases, id: \.self) { tab in
+                        VStack(spacing: 8) {
+                            Text(tab.rawValue)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(selectedTab == tab ? Color(red: 0.86, green: 0.18, blue: 0.18) : .secondary)
+                            if selectedTab == tab {
+                                Capsule()
+                                    .fill(Color(red: 0.86, green: 0.18, blue: 0.18))
+                                    .frame(height: 3)
+                                    .transition(.scale)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                selectedTab = tab
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+                Divider()
+
+                // Time Filter
+                HStack {
+                    Text("Filter:")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    
+                    ForEach(["Today", "This Week"], id: \.self) { filter in
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedTimeFilter = filter
+                            }
+                        }) {
+                            Text(filter)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(selectedTimeFilter == filter ? .white : .secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(selectedTimeFilter == filter ? Color(red: 0.86, green: 0.18, blue: 0.18) : Color.clear)
+                                .cornerRadius(6)
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                // Leaderboard List
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(Array(currentLeaderboard.enumerated()), id: \.element.id) { index, entry in
+                            LeaderboardEntryCard(entry: entry)
+                                .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity), removal: .opacity))
+                                .animation(.easeInOut(duration: 0.4).delay(Double(index) * 0.08), value: selectedTab)
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+            .navigationTitle("Leaderboards")
+            .navigationBarTitleDisplayMode(.large)
+        }
+    }
+}
+
+// MARK: - Leaderboard Entry Card
+
+struct LeaderboardEntryCard: View {
+    let entry: LeaderboardEntry
+
+    var medalEmoji: String {
+        switch entry.rank {
+        case 1: return "🥇"
+        case 2: return "🥈"
+        case 3: return "🥉"
+        default: return "⭐"
+        }
+    }
+
+    var trendArrow: String {
+        if entry.trend > 0 {
+            return "📈"
+        } else if entry.trend < 0 {
+            return "📉"
+        }
+        return ""
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Rank Badge
+            Text(medalEmoji)
+                .font(.system(size: 24))
+
+            // Avatar
+            Circle()
+                .fill(Color(red: 0.86, green: 0.18, blue: 0.18).opacity(entry.isCurrentUser ? 0.25 : 0.15))
+                .frame(width: entry.isCurrentUser ? 52 : 48, height: entry.isCurrentUser ? 52 : 48)
+                .overlay(
+                    Text(entry.avatar)
+                        .font(.system(size: entry.isCurrentUser ? 14 : 12, weight: .semibold))
+                        .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                )
+
+            // Username & Metric
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.username)
+                    .font(.system(size: entry.isCurrentUser ? 15 : 14, weight: .semibold))
+                    .foregroundColor(entry.isCurrentUser ? Color(red: 0.86, green: 0.18, blue: 0.18) : .primary)
+                HStack(spacing: 4) {
+                    Text("\(entry.metric) \(entry.unit)")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.secondary)
+                    if !trendArrow.isEmpty {
+                        Text(trendArrow)
+                            .font(.system(size: 12))
+                    }
+                }
+            }
+
+            Spacer()
+
+            // Metric Value (large)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(entry.metric)")
+                    .font(.system(size: entry.isCurrentUser ? 22 : 20, weight: .bold))
+                    .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                Text(entry.unit)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(16)
+        .background(
+            entry.isCurrentUser
+                ? Color(red: 0.86, green: 0.18, blue: 0.18).opacity(0.08)
+                : Color(.systemGray6)
+        )
+        .cornerRadius(12)
+        .overlay(
+            entry.isCurrentUser
+                ? RoundedRectangle(cornerRadius: 12).stroke(Color(red: 0.86, green: 0.18, blue: 0.18), lineWidth: 1.5)
+                : nil
+        )
+    }
+}
+
+// MARK: - CLLocationCoordinate2D Extension
+extension CLLocationCoordinate2D {
+    func distance(to coordinate: CLLocationCoordinate2D) -> Double {
+        let loc1 = CLLocation(latitude: self.latitude, longitude: self.longitude)
+        let loc2 = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return loc1.distance(from: loc2)
+    }
+}
+
 
