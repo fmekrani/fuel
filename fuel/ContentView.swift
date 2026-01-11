@@ -3380,6 +3380,7 @@ struct CameraPicker: UIViewControllerRepresentable {
     }
 }
 
+<<<<<<< Updated upstream
 // MARK: - Friends View
 struct FriendsView: View {
     @State private var showRecentSearches = false
@@ -5012,4 +5013,6 @@ extension CLLocationCoordinate2D {
     }
 }
 
+=======
+>>>>>>> Stashed changes
 
