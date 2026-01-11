@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var selected: Tab = .home
     @StateObject private var store = CalorieStore()
     @StateObject private var workoutHistory = WorkoutHistoryStore()
+    @EnvironmentObject var authService: AuthService
 
     init() {
         let tabBar = UITabBar.appearance()
@@ -71,6 +72,7 @@ struct ContentView: View {
 
             NavigationStack {
                 SettingsView()
+                    .environmentObject(authService)
             }
             .tabItem { Label("Settings", systemImage: "gear") }
             .tag(Tab.settings)
@@ -1951,12 +1953,33 @@ struct HydrationView: View {
 // MARK: - Other Tabs
 
 struct SettingsView: View {
+    @EnvironmentObject var authService: AuthService
     @State private var isDarkMode = UserDefaults.standard.bool(forKey: "darkMode")
+    @State private var showSignOutConfirmation = false
     
     var body: some View {
         NavigationStack {
             List {
                 Section("Profile") {
+                    HStack(spacing: 12) {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(Color(red: 0.86, green: 0.18, blue: 0.18))
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(authService.currentUser?.username ?? "User")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text(authService.currentUser?.email ?? "")
+                                .font(.system(size: 12, weight: .regular))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                    
                     NavigationLink("Edit profile") { UserProfileView() }
                     Toggle("Dark Mode", isOn: $isDarkMode)
                         .onChange(of: isDarkMode) { newValue in
@@ -2081,6 +2104,20 @@ struct SettingsView: View {
                         }
                     }
                 }
+                
+                Section("Account") {
+                    Button(role: .destructive, action: { showSignOutConfirmation = true }) {
+                        HStack {
+                            Image(systemName: "arrowshape.turn.up.left.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                            
+                            Text("Sign Out")
+                                .font(.system(size: 16, weight: .semibold))
+                            
+                            Spacer()
+                        }
+                    }
+                }
             }
             .navigationTitle("Settings")
         }
@@ -2095,6 +2132,13 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+        .confirmationDialog("Sign Out", isPresented: $showSignOutConfirmation, presenting: ()) { _ in
+            Button("Sign Out", role: .destructive) {
+                authService.signOut()
+            }
+        } message: {
+            Text("Are you sure you want to sign out? You'll need to sign in again to continue.")
         }
     }
 }
