@@ -13,10 +13,10 @@ struct fuelApp: App {
         WindowGroup {
             if authService.isLoggedIn {
                 ContentView()
-                    .environmentObject(authService)
+                    .environment(\.authService, authService)
             } else {
                 LoginView()
-                    .environmentObject(authService)
+                    .environment(\.authService, authService)
             }
         }
     }

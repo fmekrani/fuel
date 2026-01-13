@@ -26,7 +26,7 @@ struct ContentView: View {
     @State private var selected: Tab = .home
     @StateObject private var store = CalorieStore()
     @StateObject private var workoutHistory = WorkoutHistoryStore()
-    @EnvironmentObject var authService: AuthService
+    @Environment(\.authService) var authService
 
     init() {
         let tabBar = UITabBar.appearance()
@@ -1953,7 +1953,7 @@ struct HydrationView: View {
 // MARK: - Other Tabs
 
 struct SettingsView: View {
-    @EnvironmentObject var authService: AuthService
+    @Environment(\.authService) var authService
     @State private var isDarkMode = UserDefaults.standard.bool(forKey: "darkMode")
     @State private var showSignOutConfirmation = false
     
@@ -2928,8 +2928,6 @@ private func youtubeFormLink(for name: String) -> URL? {
 
 #Preview {
     ContentView()
-        .environmentObject(CalorieStore())  // <- inject for previews
-        .environmentObject(WorkoutHistoryStore())
 }
 // MARK: - Custom Food Form
 struct CustomFoodFormView: View {

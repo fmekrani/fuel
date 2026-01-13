@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct LoginView: View {
-    @EnvironmentObject var authService: AuthService
+    @Environment(\.authService) var authService
     @State private var email = ""
     @State private var password = ""
     @State private var username = ""
@@ -378,5 +378,4 @@ struct ForgotPasswordView: View {
 
 #Preview {
     LoginView()
-        .environmentObject(AuthService())
 }

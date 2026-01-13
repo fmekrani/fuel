@@ -1,3 +1,4 @@
+import SwiftUI
 import Firebase
 import FirebaseAuth
 import FirebaseFirestore
@@ -20,14 +21,20 @@ class AuthService: ObservableObject {
     @Published var errorMessage = ""
     @Published var isLoading = false
     
-    private let db = Firestore.firestore()
+    private var db: Firestore?
+    private let isPreview: Bool
     
-    init() {
-        checkIfUserIsLoggedIn()
+    init(isPreview: Bool = false) {
+        self.isPreview = isPreview
+        if !isPreview {
+            self.db = Firestore.firestore()
+            checkIfUserIsLoggedIn()
+        }
     }
     
     // MARK: - Check Existing Session
     func checkIfUserIsLoggedIn() {
+        guard !isPreview else { return }
         if let user = Auth.auth().currentUser {
             self.isLoggedIn = true
             fetchUserProfile(uid: user.uid)
@@ -38,6 +45,7 @@ class AuthService: ObservableObject {
     
     // MARK: - Sign Up
     func signUp(email: String, password: String, username: String) {
+        guard !isPreview else { return }
         isLoading = true
         errorMessage = ""
         
@@ -79,7 +87,7 @@ class AuthService: ObservableObject {
                 "createdAt": Date()
             ]
             
-            self?.db.collection("users").document(uid).setData(userData) { error in
+            self?.db?.collection("users").document(uid).setData(userData) { error in
                 if let error = error {
                     print("❌ Firestore Error: \(error.localizedDescription)")
                     self?.errorMessage = error.localizedDescription
@@ -96,6 +104,7 @@ class AuthService: ObservableObject {
     
     // MARK: - Sign In
     func signIn(email: String, password: String) {
+        guard !isPreview else { return }
         isLoading = true
         errorMessage = ""
         
@@ -126,6 +135,7 @@ class AuthService: ObservableObject {
     
     // MARK: - Fetch User Profile
     func fetchUserProfile(uid: String) {
+        guard !isPreview, let db = db else { return }
         db.collection("users").document(uid).getDocument { [weak self] document, error in
             if let error = error {
                 self?.errorMessage = error.localizedDescription
@@ -152,6 +162,11 @@ class AuthService: ObservableObject {
     
     // MARK: - Sign Out
     func signOut() {
+        guard !isPreview else {
+            self.isLoggedIn = false
+            self.currentUser = nil
+            return
+        }
         do {
             try Auth.auth().signOut()
             print("✅ Signed out successfully")
@@ -165,6 +180,10 @@ class AuthService: ObservableObject {
     
     // MARK: - Reset Password
     func resetPassword(email: String, completion: @escaping (Bool, String) -> Void) {
+        guard !isPreview else {
+            completion(true, "Preview mode")
+            return
+        }
         Auth.auth().sendPasswordReset(withEmail: email) { error in
             if let error = error {
                 completion(false, error.localizedDescription)
@@ -177,6 +196,7 @@ class AuthService: ObservableObject {
     // MARK: - Update Profile
     func updateProfile(username: String, bio: String) {
         guard var user = currentUser else { return }
+        guard !isPreview, let db = db else { return }
         
         db.collection("users").document(user.uid).updateData([
             "username": username,
@@ -189,5 +209,29 @@ class AuthService: ObservableObject {
                 self?.currentUser = user
             }
         }
+    }
+}
+
+// MARK: - Environment Key for Previews
+private struct AuthServiceKey: EnvironmentKey {
+    static let defaultValue: AuthService = {
+        let service = AuthService(isPreview: true)
+        service.isLoggedIn = true
+        service.currentUser = AppUser(
+            uid: "preview-user",
+            email: "preview@example.com",
+            username: "Preview User",
+            bio: "This is a preview user",
+            profileImage: "",
+            createdAt: Date()
+        )
+        return service
+    }()
+}
+
+extension EnvironmentValues {
+    var authService: AuthService {
+        get { self[AuthServiceKey.self] }
+        set { self[AuthServiceKey.self] = newValue }
     }
 }

@@ -353,6 +353,4 @@ struct APIKeySettingsView: View {
 
 #Preview {
     CoachView()
-        .environmentObject(CalorieStore())
-        .environmentObject(WorkoutHistoryStore())
 }
