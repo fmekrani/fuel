@@ -379,6 +379,7 @@ struct CalorieView: View {
                             HStack(spacing: inter) {
                                 NavigationLink {
                                     CountCaloriesView()
+                                        .environmentObject(store)
                                 } label: {
                                     DashboardCard(
                                         title: "Count Calories",
@@ -390,6 +391,7 @@ struct CalorieView: View {
 
                                 NavigationLink {
                                     CalorieCalculationView()
+                                        .environmentObject(store)
                                 } label: {
                                     DashboardCard(
                                         title: "Calorie Calculation",
@@ -404,6 +406,8 @@ struct CalorieView: View {
                             HStack(spacing: inter) {
                                 NavigationLink {
                                     OverallStatsView()
+                                        .environmentObject(store)
+                                        .environmentObject(workoutHistory)
                                 } label: {
                                     DashboardCard(
                                         title: "Overall Stats",
@@ -569,7 +573,7 @@ struct CountCaloriesView: View {
                     FoodWeightSection(food: food, foodWeight: $foodWeight, addAction: addFoodEntry)
                 }
                 
-                TodaysEntriesSection(store: store)
+                TodaysEntriesSection()
             }
             .padding(.top)
         }
@@ -820,7 +824,7 @@ struct MacroPill: View {
 
 // MARK: - Todays Entries Section
 struct TodaysEntriesSection: View {
-    @ObservedObject var store: CalorieStore
+    @EnvironmentObject var store: CalorieStore
     
     var body: some View {
         let today = Calendar.current.startOfDay(for: Date())
